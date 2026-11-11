@@ -127,6 +127,71 @@ window.H = {
           updateAmmoUI(); },
   ads(on){ setADS(on); },
   shoot(n){ for (let i = 0; i < (n || 1); i++){ player.fireCooldown = 0; fireWeapon(); } },
+
+  /* 武器命中与反馈诊断。只读：从当前真实全局状态采集纯数据快照，交给
+     tools/weapon-diagnostics.js 的纯函数模块，返回可 JSON 序列化的诊断对象。
+     obs 可部分覆盖一次射击的观测记录（fired / hitRecorded / crosshairOnEnemy /
+     crosshairOnWorld / muzzleFlash / shellEjected / shellSide）；不传则按当前
+     状态现场采集。不修改任何游戏状态，玩家死亡或 G.over 时返回“不可诊断”。 */
+  diagnose(obs){
+    obs = obs || {};
+    try{
+      if (typeof WeaponDiagnostics === 'undefined')
+        return {diagnosable:false, verdict:'not-diagnosable', validHit:false,
+                reason:'tools/weapon-diagnostics.js 未加载，无法诊断', checks:[]};
+      if (player.dead || G.over)
+        return WeaponDiagnostics.notDiagnosable(
+          '玩家已死亡或对局已结束（player.dead=' + player.dead + ', G.over=' + G.over + '），不可诊断');
+
+      const w = WEAPONS[player.weapon];
+
+      /* 准星射线（与 fidelity 完全相同的采集方式：相机方向 + 当前武器射程，
+         首个命中落在 enemyHitMeshes 还是 worldSolid）。仅读取，不改矩阵。 */
+      const R = new THREE.Raycaster();
+      const fw = new THREE.Vector3();
+      camera.getWorldDirection(fw);
+      R.set(camera.position, fw); R.far = w.range;
+      const pre = R.intersectObjects(enemyHitMeshes.concat(worldSolid), false)[0];
+      const preEnemy = !!(pre && pre.object.userData && pre.object.userData.enemy);
+      const preWorld = !!(pre && !(pre.object.userData && pre.object.userData.enemy));
+
+      /* 未显式传入观测时：有计时残留说明最近一次 fireWeapon 确实射出了实弹 */
+      const firedHeuristic = player.fireCooldown > 0 || player.pumpT > 0 || player.boltT > 0;
+      const muzzle = (typeof flashT !== 'undefined' && flashT > 0);
+
+      /* 弹壳：找最新的一枚，按相机右向量求左右侧（与 wtest 同一计算） */
+      const latestShell = SHELLS.filter(x => x.life > 0).sort((a,b) => b.life - a.life)[0];
+      let shellSide = null;
+      if (latestShell){
+        const rel = latestShell.mesh.position.clone().sub(camera.position);
+        const rgt = new THREE.Vector3(); camera.getWorldDirection(rgt);
+        rgt.cross(new THREE.Vector3(0,1,0)).normalize();
+        shellSide = +rel.dot(rgt).toFixed(2);
+      }
+
+      const snapshot = {
+        weapon: {id:w.id, name:w.name, mag:w.mag, magSize:w.magSize, reserve:w.res,
+                 range:w.range, adsFov:w.adsFov, spreadBase:w.spreadBase},
+        player: {weapon:player.weapon, fireCooldown:player.fireCooldown,
+                 pumpT:player.pumpT, boltT:player.boltT, reloadT:player.reloadT,
+                 ads:player.ads, adsEase:player.adsEase, triggerHeld:player.triggerHeld},
+        shot: {
+          fired:        obs.fired        !== undefined ? !!obs.fired        : firedHeuristic,
+          crosshairOnEnemy: obs.crosshairOnEnemy !== undefined ? !!obs.crosshairOnEnemy : preEnemy,
+          crosshairOnWorld: obs.crosshairOnWorld !== undefined ? !!obs.crosshairOnWorld : preWorld,
+          hitRecorded:  obs.hitRecorded  !== undefined ? !!obs.hitRecorded  : false,
+          muzzleFlash:  obs.muzzleFlash  !== undefined ? !!obs.muzzleFlash  : muzzle,
+          shellEjected: obs.shellEjected !== undefined ? !!obs.shellEjected : !!latestShell,
+          shellSide:    obs.shellSide    !== undefined ? obs.shellSide      : shellSide
+        }
+      };
+      return WeaponDiagnostics.diagnoseShot(snapshot);
+    }catch(err){
+      return {diagnosable:false, verdict:'not-diagnosable', validHit:false,
+              reason:'诊断采集失败：' + (err && err.message ? err.message : String(err)),
+              checks:[]};
+    }
+  },
   resume(){ G.paused = false; G.running = true; UI.pause.classList.remove('on'); },
   state(){ return {hp:+player.hp.toFixed(0), ar:+player.armor.toFixed(0), k:G.kills, w:player.weapon,
                    mag:WEAPONS[player.weapon].mag, ads:player.ads, adsK:+player.adsK.toFixed(2),

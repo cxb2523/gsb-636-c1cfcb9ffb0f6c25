@@ -209,6 +209,8 @@ PROMPTS.md              the prompts that specify it, verbatim
 screenshots/            images used by this README
 tools/test-harness.js   collision, weapon and AI test suite
 tools/autoplay-bot.js   pathfinding bot for unattended regression runs
+tools/weapon-diagnostics.js   pure-function weapon hit/feedback diagnostics
+tools/weapon-diagnostics.test.js  offline Node tests for the diagnostics
 ```
 
 The two files in `tools/` are development-only. Neither is referenced by `index.html`; they
@@ -216,6 +218,15 @@ are pasted into the console or injected over the DevTools protocol. The harness 
 collision audits, weapon accuracy and hit-fidelity tests, map boundary probes and an enemy
 watchdog. The bot plays full rounds on its own with configurable aim error and reaction
 delay, which is how the collision and AI fixes were regression tested.
+
+`tools/weapon-diagnostics.js` is a dependency-free pure-function module: it takes a plain
+data snapshot of the weapon, the player state and one shot's observations, and returns a
+JSON-serialisable verdict (valid hit, ghost miss, false hit, world impact, not fired), the
+ammo/cooldown firing gates, an ordered checklist with human-readable failure reasons, and a
+fidelity block mirroring the harness `fidelity()` comparison of `preEnemy` vs `got`. The
+harness wires it to live game state through the read-only `H.diagnose(obs?)` method, which
+returns a not-diagnosable result instead of throwing when the player is dead or `G.over` is
+set. Run its tests offline with `node tools/weapon-diagnostics.test.js`.
 
 ## License
 
